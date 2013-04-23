@@ -25,7 +25,7 @@ clean:
 	rm -rf pdgemv *.o recognizer
 
 tidy: clean
-	rm -rf *~ *.swp 
+	rm -rf *~ .*~ *.swp .*.swp
 
 rundemo: pdgemv
 	mpiexec -np 4 ./pdgemv

@@ -16,6 +16,13 @@
 #include "PBblacs.h"
 #include "PBpblas.h"
 
+//#define MPI_IO 1
+#ifdef MPI_IO
+	#include "mpio.h"
+#endif
+#define DESCRIPTORS
+#define DOTHEMATH
+
 #define AA(i,j) AA[(i)*M+(j)]
 
 //void Cblacs_get (int context, int request, int* value);
@@ -39,15 +46,99 @@ int main(int argc, char **argv) {
 	MPI_Init( &argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &myrank_mpi);
 	MPI_Comm_size(MPI_COMM_WORLD, &nprocs_mpi);
+
+#ifdef DESCRIPTORS
 	/************  BLACS ***************************/
-	int ictxt, nprow, npcol, myrow, mycol,nb;
+	int context, nprow, npcol, myrow, mycol, nb;
 	int info,itemp;
 	int ZERO=0,ONE=1; /* constants for passing into pblacs routines */
-	char* testFilename = "testcharacter.bin";
-	char* refFilename = "referenceset.bin";
+#else	
+	/************  BLACS ***************************/
+	int ictxt, nprow, npcol, myrow, mycol, nb;
+	int info,itemp;
+	int ZERO=0,ONE=1; /* constants for passing into pblacs routines */
+#endif
+
+#ifdef MPI_IO
+	char* testFilename = "/scratch/speyer/testcharacter.bin";
+	char* refFilename = "/scratch/speyer/referenceset.bin";
+	FILE * refFile;
+	FILE * testFile;
+	int fileStatus;
 
 	/* read in data with MPI-IO */
+	//int MPI_File_open (MPI_Comm comm, char *filename, int amode, MPI_Info info, MPI_File *fh);
+	fileStatus = MPI_File_open(MPI_COMM_WORLD, refFilename,  MPI_MODE_RDONLY, MPI_INFO_NULL, refFile);
+	fileStatus = MPI_File_open(MPI_COMM_WORLD, testFilename, MPI_MODE_RDONLY, MPI_INFO_NULL, testFile);
 
+#endif /* MPI_IO */
+#ifdef DESCRIPTORS
+	/* initialize descriptors for each array that is to be shared among the
+	 * global process grid
+	 * A mxn, U mxm, S mxn, V nxn, T 1xn, X nxn, x 1xn, D nxn  
+	 *		m=samples (letters)=72
+	 *		n=linear binary file length  = 128x128 = 16384
+	*/
+	/* determine number of processor rows/columns based on nprocs_mpi */
+	nb = 2;	
+	Cblacs_pinfo( &myrank_mpi, &nprocs_mpi ) ;
+	nprow = npcol = (int)sqrt(nprocs_mpi);
+	Cblacs_get( 0, 0, &context );
+	Cblacs_gridinit( &context, "Row", nprow, npcol );
+	Cblacs_gridinfo( context, &nprow, &npcol, &myrow, &mycol );
+
+	/* determine the size of the matrix */
+	/* matrix size is already known at 72*(128*128)= 72*16384 */
+	int M=72,N=16384;
+
+	int descA[9],descT[9],descU[9],descS[9],descV[9],descX[9],descx[9],descD[9];
+
+	/* get num rows, columns for each local matrix */
+	/* the following is based on netlib.org/scalapack/tools/numroc.f
+	 * but it disagrees with the examples in Dr. Speyer's code namely: 
+	 *		the third argument to numroc_ should be the coordinate of the processor
+	 *		the fifth argument to numroc_ should be nprocs (total num processors) */
+	int mA = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nA = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mU = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nU = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mS = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nS = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mV = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nV = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mX = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nX = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mD = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nD = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mx = 1;
+	int nx = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mT = 1;
+	int nT = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	
+	/* initialize the descriptors for each global array */
+	descinit_(descA, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mA, &info);
+	descinit_(descU, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mU, &info);
+	descinit_(descS, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mS, &info);
+	descinit_(descV, &N,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mV, &info);
+	descinit_(descX, &N,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mX, &info);
+	descinit_(descD, &N,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mD, &info);
+	descinit_(descx, &ONE, &N, &nb, &nb, &ZERO, &ZERO, &context, &mx, &info);
+	descinit_(descT, &ONE, &N, &nb, &nb, &ZERO, &ZERO, &context, &mT, &info);
+
+	/* initialize each array with the appropriate contents */
+	double *gA = (double*) malloc(M*N*sizeof(double));	/* array to hold the global reference matrix, A */
+	double *gT = (double*) malloc(1*N*sizeof(double));	/* array to hold the global test matrix, T */
+	double *A = (double*) malloc(mA*nA*sizeof(double));	/* array to hold the local reference matrix, A */
+	double *U = (double*) malloc(mU*nU*sizeof(double));	/* array to hold the orthonormal matrix, U */
+	double *S = (double*) malloc(mS*nS*sizeof(double));	/* array to hold the singular values matrix, S */
+	double *V = (double*) malloc(mV*nV*sizeof(double));	/* array to hold the orthonormal matrix, V */
+	double *X = (double*) malloc(mX*nX*sizeof(double));	/* array to hold the matrix, X */
+	double *D = (double*) malloc(mD*nD*sizeof(double));	/* array to hold the matrix, D */
+	double *x = (double*) malloc(mx*nx*sizeof(double));	/* array to hold the matrix, x */
+	double *T = (double*) malloc(mT*nT*sizeof(double));	/* array to hold the test matrix, T */
+	
+	/* fill the local arrays (reference, test) from the global arrays */
+#else
 	nprow = 2; npcol = 2; nb =2;
 	Cblacs_pinfo( &myrank_mpi, &nprocs_mpi ) ;
 	Cblacs_get( -1, 0, &ictxt );
@@ -55,7 +146,6 @@ int main(int argc, char **argv) {
 	Cblacs_gridinfo( ictxt, &nprow, &npcol, &myrow, &mycol );
 
 	/* determine the size of the matrix */
-	/* matrix size is already known at 72*(128*128)= 72*16384 */
 	int M=5;
 	double *AA = (double*) malloc(M*M*sizeof(double));
 	/* fill the matrix */
@@ -71,35 +161,64 @@ int main(int argc, char **argv) {
 	int nA = numroc_( &M, &nb, &mycol, &ZERO, &npcol );
 	int nx = numroc_( &M, &nb, &myrow, &ZERO, &nprow );
 	int my = numroc_( &M, &nb, &myrow, &ZERO, &nprow );
-	descinit_(descA, &M,   &M,   &nb,  &nb,  &ZERO, &ZERO, &ictxt, &mA,  &info);
-	descinit_(descx, &M, &ONE,   &nb, &ONE,  &ZERO, &ZERO, &ictxt, &nx, &info);
-
-	descinit_(descy, &M, &ONE,   &nb, &ONE,  &ZERO, &ZERO, &ictxt, &my, &info);
+	descinit_(descA, &M,   &M,  &nb,  &nb,  &ZERO, &ZERO, &ictxt, &mA, &info);
+	descinit_(descx, &M, &ONE,  &nb, &ONE,  &ZERO, &ZERO, &ictxt, &nx, &info);
+	descinit_(descy, &M, &ONE,  &nb, &ONE,  &ZERO, &ZERO, &ictxt, &my, &info);
 	double *x = (double*) malloc(nx*sizeof(double));
 	double *y = (double*) calloc(my,sizeof(double));
 	double *A = (double*) malloc(mA*nA*sizeof(double));
 	int sat,sut;
-	for(i=0;i<mA;i++)
-
+	for(i=0;i<mA;i++){
 		for(j=0;j<nA;j++){
 			sat= (myrow*nb)+i+(i/nb)*nb;
 			sut= (mycol*nb)+j+(j/nb)*nb;
 			A[j*mA+i]=AA(sat,sut);
 		}
+	}
 
 
 	for(i=0;i<nx;i++){
 		sut= (myrow*nb)+i+(i/nb)*nb;
 		x[i]=X[sut];
 	}
+#endif
+#ifdef DOTHEMATH
+	/* calculate mean vector of reference set */
+	
+	/* subtract the mean from the test image and the reference set (mean center) */
 
+	/* perform svd on the normalized A to get basis matrices, U & V	*/
+	/* pdgesvd_() */
+
+	/* Multiply X=U'A  and  x=UU'T */
+
+	/* Find mimimum:
+	 * Subtract x from each column of X to make D */
+
+	/* caculate sqrt(D'D) */
+
+	/* find the minimum diagonal element, this is the matching character */
+
+	/* print number of matching character */
+
+	/* barrier on A??? */
+	Cblacs_barrier(context, "A");
+#else
 	double alpha = 1.0; double beta = 0.0;
 	pdgemv_("N",&M,&M,&alpha,A,&ONE,&ONE,descA,x,&ONE,&ONE,descx,&ONE,&beta,y,&ONE,&ONE,descy,&ONE);
 
 	Cblacs_barrier(ictxt,"A");
 	for(i=0;i<my;i++)
 		printf("rank=%d %.2f \n", myrank_mpi,y[i]);
+#endif /* DOTHEMATH */
 	Cblacs_gridexit( 0 );
+
+#ifdef MPI_IO
+	/* close file with MPI-IO */
+	MPI_File_close(refFilename, MPI_INFO_NULL);
+	MPI_File_close(testFilename, MPI_INFO_NULL);
+#endif /* MPI_IO */
+
 	MPI_Finalize();
 	/* finalize timing harness */
 	return 0;
@@ -119,6 +238,5 @@ int main(int argc, char **argv) {
  */
 
 /* QUESTIONS:  
- * (1) does this program need to run with various numbe of processors?
- *		1,4,16,64?
+ *	(3) is the leading dimension the number of rows?? - no. LLD_A=number of rows of the local array that stores the blocks of A
  *	*/
