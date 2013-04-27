@@ -16,12 +16,10 @@
 #include "PBblacs.h"
 #include "PBpblas.h"
 
-//#define MPI_IO 1
-#ifdef MPI_IO
-	#include "mpio.h"
-#endif
-#define DESCRIPTORS
-#define DOTHEMATH
+#define MPI_IO 1
+#define DEBUG 1
+//#define DESCRIPTORS
+//#define DOTHEMATH
 
 #define AA(i,j) AA[(i)*M+(j)]
 
@@ -43,34 +41,67 @@ int main(int argc, char **argv) {
 	/* initialize timing harness */
 	/************  MPI ***************************/
 	int myrank_mpi, nprocs_mpi;
+	int errorcode=0;
 	MPI_Init( &argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &myrank_mpi);
 	MPI_Comm_size(MPI_COMM_WORLD, &nprocs_mpi);
 
-#ifdef DESCRIPTORS
 	/************  BLACS ***************************/
-	int context, nprow, npcol, myrow, mycol, nb;
-	int info,itemp;
-	int ZERO=0,ONE=1; /* constants for passing into pblacs routines */
-#else	
-	/************  BLACS ***************************/
+	int context=0, nprow, npcol, myrow, mycol, nb, ndims=2;
+#ifdef ORIGINAL	
 	int ictxt, nprow, npcol, myrow, mycol, nb;
+#endif /* ORIGINAL */
 	int info,itemp;
 	int ZERO=0,ONE=1; /* constants for passing into pblacs routines */
-#endif
 
 #ifdef MPI_IO
-	char* testFilename = "/scratch/speyer/testcharacter.bin";
-	char* refFilename = "/scratch/speyer/referenceset.bin";
-	FILE * refFile;
-	FILE * testFile;
+	/* read in data with MPI-IO */
+	char* testFilename = "/scratch/jwelch4/testcharacter.bin";
+	char* refFilename  = "/scratch/jwelch4/referenceset.bin";
+	MPI_File  refFile;
+	MPI_File testFile;
 	int fileStatus;
 
-	/* read in data with MPI-IO */
-	//int MPI_File_open (MPI_Comm comm, char *filename, int amode, MPI_Info info, MPI_File *fh);
-	fileStatus = MPI_File_open(MPI_COMM_WORLD, refFilename,  MPI_MODE_RDONLY, MPI_INFO_NULL, refFile);
-	fileStatus = MPI_File_open(MPI_COMM_WORLD, testFilename, MPI_MODE_RDONLY, MPI_INFO_NULL, testFile);
+	Cblacs_pinfo( &myrank_mpi, &nprocs_mpi ) ;
+	/* processor array dims = sqrt (nprocs)  - assume square integer */
+	nprow = npcol = (int)sqrt(nprocs_mpi);
 
+	/* matrix size is already known: 72*(128*128)= 72*16384 */
+	int M=72,N=16384;
+	nb = 2;	/* number of blocks per side */
+
+	/* create the darray to describe the block distribution */
+	MPI_Datatype darray;
+	/* number of elements of oldtype in each dimension of global array */
+	int gsizes[2] = {M, N};
+	/* distribution of array in each dimension */
+	int distribs[2] = {MPI_DISTRIBUTE_CYCLIC, MPI_DISTRIBUTE_CYCLIC};
+	/* distribution argument in each dimension */
+	int dargs[2] = {nb, nb};
+	/* size of process grid in each dimension */
+	int psizes[2] = {nprow, npcol};
+
+	/* create the darray corresponding to the referenceFile */
+	MPI_Type_create_darray(nprocs_mpi, myrank_mpi, ndims, 
+		gsizes, distribs, dargs,  psizes,
+		MPI_ORDER_FORTRAN, MPI_DOUBLE, &darray);
+
+	MPI_Type_commit(&darray);
+
+#ifdef DEBUG
+	printf("P(%d): Begin File read\n", myrank_mpi);
+#endif
+	fileStatus = MPI_File_open(MPI_COMM_WORLD, refFilename,  MPI_MODE_CREATE, MPI_INFO_NULL, &refFile);
+		
+		
+		
+		
+		
+		
+//	fileStatus = MPI_File_open(MPI_COMM_WORLD, testFilename, MPI_MODE_RDONLY, MPI_INFO_NULL, testFile);
+#ifdef DEBUG
+	printf("P(%d): End File read\n", myrank_mpi);
+#endif
 #endif /* MPI_IO */
 #ifdef DESCRIPTORS
 	/* initialize descriptors for each array that is to be shared among the
@@ -80,16 +111,11 @@ int main(int argc, char **argv) {
 	 *		n=linear binary file length  = 128x128 = 16384
 	*/
 	/* determine number of processor rows/columns based on nprocs_mpi */
-	nb = 2;	
-	Cblacs_pinfo( &myrank_mpi, &nprocs_mpi ) ;
-	nprow = npcol = (int)sqrt(nprocs_mpi);
 	Cblacs_get( 0, 0, &context );
 	Cblacs_gridinit( &context, "Row", nprow, npcol );
 	Cblacs_gridinfo( context, &nprow, &npcol, &myrow, &mycol );
 
 	/* determine the size of the matrix */
-	/* matrix size is already known at 72*(128*128)= 72*16384 */
-	int M=72,N=16384;
 
 	int descA[9],descT[9],descU[9],descS[9],descV[9],descX[9],descx[9],descD[9];
 
@@ -114,7 +140,7 @@ int main(int argc, char **argv) {
 	int nx = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
 	int mT = 1;
 	int nT = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	
+
 	/* initialize the descriptors for each global array */
 	descinit_(descA, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mA, &info);
 	descinit_(descU, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mU, &info);
@@ -138,7 +164,9 @@ int main(int argc, char **argv) {
 	double *T = (double*) malloc(mT*nT*sizeof(double));	/* array to hold the test matrix, T */
 	
 	/* fill the local arrays (reference, test) from the global arrays */
-#else
+	/* TODO: linker error preventing MPI-IO */
+#endif /* DESCRIPTORS */
+#ifdef ORIGINAL
 	nprow = 2; npcol = 2; nb =2;
 	Cblacs_pinfo( &myrank_mpi, &nprocs_mpi ) ;
 	Cblacs_get( -1, 0, &ictxt );
@@ -190,7 +218,7 @@ int main(int argc, char **argv) {
 	/* perform svd on the normalized A to get basis matrices, U & V	*/
 	/* pdgesvd_() */
 
-	/* Multiply X=U'A  and  x=UU'T */
+	/* Multiply X=U'A  and  x=U'T (corrected from x=UU'T) */
 
 	/* Find mimimum:
 	 * Subtract x from each column of X to make D */
@@ -201,22 +229,25 @@ int main(int argc, char **argv) {
 
 	/* print number of matching character */
 
-	/* barrier on A??? */
-	Cblacs_barrier(context, "A");
-#else
+#endif /* DOTHEMATH */
+#ifdef ORIGINAL
 	double alpha = 1.0; double beta = 0.0;
 	pdgemv_("N",&M,&M,&alpha,A,&ONE,&ONE,descA,x,&ONE,&ONE,descx,&ONE,&beta,y,&ONE,&ONE,descy,&ONE);
 
 	Cblacs_barrier(ictxt,"A");
 	for(i=0;i<my;i++)
 		printf("rank=%d %.2f \n", myrank_mpi,y[i]);
-#endif /* DOTHEMATH */
+#endif /* ORIGINAL */
+	Cblacs_barrier(context, "A");
 	Cblacs_gridexit( 0 );
-
+#ifdef DEBUG
+	printf("P(%d) Waiting on barrier\n", myrank_mpi);
+#endif
+	MPI_Barrier(MPI_COMM_WORLD);
 #ifdef MPI_IO
 	/* close file with MPI-IO */
-	MPI_File_close(refFilename, MPI_INFO_NULL);
-	MPI_File_close(testFilename, MPI_INFO_NULL);
+	MPI_File_close( &refFile);
+//	MPI_File_close(&testFile);
 #endif /* MPI_IO */
 
 	MPI_Finalize();
@@ -230,7 +261,7 @@ int main(int argc, char **argv) {
  *		set.  Subtract mean from the test image (T) & from each character in 
  *		the set (A).
  * (2) Perform SVD on the normalized A to get basis matrices, U & V
- * (3) Projections: Multiply X=U'A  and  x=UU'T 
+ * (3) Projections: Multiply X=U'A  and  x=U'T (corrected from UU'T)
  * (4) Find Minimum: Subtract x from each column of X to make D,
  *		the "difference matrix"*
  * (5) Calculate DD', find the minimum diagonal element. The column of this
