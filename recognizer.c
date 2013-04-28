@@ -15,8 +15,11 @@
 #include "mkl_scalapack.h"
 #include "PBblacs.h"
 #include "PBpblas.h"
+#include <time.h>
+#include <sys/time.h>
 
-#define DEBUG 1
+//#define ALERT
+//#define DEBUG 1
 //#define DESCRIPTORS
 #define DOTHEMATH
 #define READTESTFILE
@@ -40,8 +43,13 @@ double rowMax(double * u, int rowLength);
 double rowMin(double * u, int rowLength);
 
 int main(int argc, char **argv) {
-	int i, j, k;
-	/* initialize timing harness */
+    /* timing variables */
+    struct timeval startTime, endTime, ioStart, ioEnd;
+    long seconds, useconds;
+    double preciseTime;
+    /* Get start time - executed by all nodes since no rank assigned yet*/
+	gettimeofday(&startTime, NULL);
+
 	/************  MPI ***************************/
 	int myrank_mpi, nprocs_mpi;
 	int errorcode=0;
@@ -51,14 +59,14 @@ int main(int argc, char **argv) {
 
 	/************  BLACS ***************************/
 	int context=0, nprow, npcol, myrow, mycol, nb, ndims=2;
-#ifdef ORIGINAL	
-	int ictxt, nprow, npcol, myrow, mycol, nb;
-#endif /* ORIGINAL */
+	int i, j, k;
 	int info,itemp;
 	int ZERO=0,ONE=1; /* constants for passing into pblacs routines */
 	double *A, *U, *S, *V, *X, *D, *x, *T; /* local arrays */
 
-	/* TODO: insert timing harness to time IOPS */
+	/* timing harness for IOPS */
+	gettimeofday(&ioStart, NULL);
+
 	/* read in data with MPI-IO */
 	char* testFilename = "/scratch/jwelch4/testcharacter.bin";
 	char* refFilename  = "/scratch/jwelch4/referenceset.bin";
@@ -141,11 +149,12 @@ int main(int argc, char **argv) {
 	printf("P(%d): begin TEST File read\n", myrank_mpi); fflush(stdout);
 #endif
 	MPI_File_read_all(testFile, T, nElements, MPI_DOUBLE, mpistatus); 
-#ifdef DEBUG
+#ifdef ALERT
 	printf("P(%d): End TEST File read\n", myrank_mpi);
 	printf("P(%d): nElements=%d, nT=%d\n", myrank_mpi, nElements,nT);
 	printf("P(%d): max(T)=%3.2f\n", myrank_mpi, rowMax(T, nElements));
 	printf("P(%d): min(T)=%3.2f\n", myrank_mpi, rowMin(T, nElements));
+	fflush(stdout);
 #endif
 
 	MPI_File_close(&refFile);
@@ -153,8 +162,16 @@ int main(int argc, char **argv) {
 #ifdef DEBUG
 	printf("P(%d): REF& TEST files closed\n", myrank_mpi);
 #endif
-	/* TODO: close timing harness for IOPS */
-
+	/* close timing harness for IOPS */
+    /* timekeeping - only needs to be executed by root*/ 
+    if(myrank_mpi == 0) {
+		gettimeofday(&ioEnd, NULL);
+		seconds  = ioEnd.tv_sec  - startTime.tv_sec;
+		useconds = ioEnd.tv_usec - startTime.tv_usec;
+		preciseTime = seconds + useconds/1000000.0;
+		printf(" IO Time = %3.4f\n", preciseTime );  
+		fflush(stdout);
+	}
 
 #ifdef DESCRIPTORS
 	/* initialize descriptors for each array that is to be shared among the
@@ -291,6 +308,15 @@ int main(int argc, char **argv) {
 
 	MPI_Finalize();
 	/* finalize timing harness */
+    /* timekeeping - only needs to be executed by root*/ 
+    if(myrank_mpi == 0) {
+		gettimeofday(&endTime, NULL);
+		seconds  = endTime.tv_sec  - startTime.tv_sec;
+		useconds = endTime.tv_usec - startTime.tv_usec;
+		preciseTime = seconds + useconds/1000000.0;
+		printf(" IO Time = %3.4f\n", preciseTime );  
+		fflush(stdout);
+	}
 	return 0;
 }
 
