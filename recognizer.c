@@ -18,8 +18,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-//#define ALERT
-//#define DEBUG 1
+#define ALERT
 //#define DESCRIPTORS
 #define DOTHEMATH
 #define READTESTFILE
@@ -75,8 +74,10 @@ int main(int argc, char **argv) {
 	int fileStatus;
 	MPI_Status * mpistatus=0;
 
+	/* get rank and processor count for the BLACS grid */
 	Cblacs_pinfo( &myrank_mpi, &nprocs_mpi ) ;
-	/* processor array dims = sqrt (nprocs)  - assume square integer */
+	/* idefine processor grid topology: 
+	 * processor array dims = sqrt (nprocs)  - assume square integer */
 	nprow = npcol = (int)sqrt(nprocs_mpi);
 
 	/* matrix size is already known: 72*(128*128)= 72*16384 */
@@ -149,7 +150,7 @@ int main(int argc, char **argv) {
 	printf("P(%d): begin TEST File read\n", myrank_mpi); fflush(stdout);
 #endif
 	MPI_File_read_all(testFile, T, nElements, MPI_DOUBLE, mpistatus); 
-#ifdef ALERT
+#ifdef DEBUG
 	printf("P(%d): End TEST File read\n", myrank_mpi);
 	printf("P(%d): nElements=%d, nT=%d\n", myrank_mpi, nElements,nT);
 	printf("P(%d): max(T)=%3.2f\n", myrank_mpi, rowMax(T, nElements));
@@ -173,7 +174,6 @@ int main(int argc, char **argv) {
 		fflush(stdout);
 	}
 
-#ifdef DESCRIPTORS
 	/* initialize descriptors for each array that is to be shared among the
 	 * global process grid
 	 * A mxn, U mxm, S mxn, V nxn, T 1xn, X nxn, x 1xn, D nxn  
@@ -207,6 +207,7 @@ int main(int argc, char **argv) {
 	int mx = 1;
 	int nx = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
 
+#ifdef DESCRIPTORS
 	/* initialize the descriptors for each global array */
 	descinit_(descA, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mA, &info);
 	descinit_(descU, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mU, &info);
@@ -314,12 +315,12 @@ int main(int argc, char **argv) {
 		seconds  = endTime.tv_sec  - startTime.tv_sec;
 		useconds = endTime.tv_usec - startTime.tv_usec;
 		preciseTime = seconds + useconds/1000000.0;
-		printf(" IO Time = %3.4f\n", preciseTime );  
+		printf(" Total Time = %3.4f\n", preciseTime );  
 		fflush(stdout);
 	}
 	return 0;
 }
-
+/* Local Function Declarations */
 double findMaxMag(double** u, int length){
 	int i,j;
 	double gMax=u[0][0];
