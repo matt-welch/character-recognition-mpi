@@ -19,7 +19,8 @@
 #include <sys/time.h>
 
 #define ALERT
-//#define DESCRIPTORS
+#define DEBUG
+#define DESCRIPTORS
 #define DOTHEMATH
 #define READTESTFILE
 
@@ -59,7 +60,7 @@ int main(int argc, char **argv) {
 	/************  BLACS ***************************/
 	int context=0, nprow, npcol, myrow, mycol, nb, ndims=2;
 	int i, j, k;
-	int info,itemp;
+	int info=0,itemp;
 	int ZERO=0,ONE=1; /* constants for passing into pblacs routines */
 	double *A, *U, *S, *V, *X, *D, *x, *T; /* local arrays */
 
@@ -81,80 +82,86 @@ int main(int argc, char **argv) {
 	nprow = npcol = (int)sqrt(nprocs_mpi);
 
 	/* matrix size is already known: 72*(128*128)= 72*16384 */
-	int M=72,N=16384, nElements;
+	int M=16384, N=72, nElements;
 	nb = 2;	/* number of blocks per side */
 
 	/* set variables for darray */
-	MPI_Datatype darray;/* create the darray to describe the block distribution */
+	MPI_Datatype darrayA, darrayT;/* create the darray to describe the block distribution */
 	int gsizes[2] = {M, N};/* number of elements of oldtype in each dimension of global array */
 	int locsize = 0;
 	int distribs[2] = {MPI_DISTRIBUTE_CYCLIC, MPI_DISTRIBUTE_CYCLIC};/* distribution of array in each dimension */
 	int dargs[2] = {nb, nb};/* distribution argument in each dimension */
 	int psizes[2] = {nprow, npcol};/* size of process grid in each dimension */
 
-	/* create the darray corresponding to the referenceFile */
+	/* create the darrayA corresponding to the referenceFile */
 	MPI_Type_create_darray(nprocs_mpi, myrank_mpi, ndims, 
 		gsizes, distribs, dargs,  psizes,
-		MPI_ORDER_FORTRAN, MPI_DOUBLE, &darray);
-	MPI_Type_commit(&darray);
+		MPI_ORDER_FORTRAN, MPI_DOUBLE, &darrayA);
+	MPI_Type_commit(&darrayA);
 
 	fileStatus = MPI_File_open(MPI_COMM_WORLD, refFilename,  MPI_MODE_RDONLY, 
 			MPI_INFO_NULL, &refFile);
 	char* datarep = "native";
 	int mA = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
 	int nA = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	MPI_Type_size(darray, &locsize);
+	MPI_Type_size(darrayA, &locsize);
 	nElements = locsize / 8; /* doubles are 8 bytes per element */
 #ifdef DEBUG
-	printf("P(%d): N=%d\n", myrank_mpi, nElements); fflush(stdout);
+	printf("P(%d): nElements=%d\n", myrank_mpi, nElements); fflush(stdout);
 #endif
 	A = malloc(nElements*sizeof(double));  /* array to hold the local reference matrix, A */
 #ifdef DEBUG
 	printf("P(%d): %d doubles allocated for A.\n", myrank_mpi, nElements);
 #endif
-	MPI_File_set_view(refFile, 0, MPI_DOUBLE, darray, datarep, MPI_INFO_NULL);
+	MPI_File_set_view(refFile, 0, MPI_DOUBLE, darrayA, datarep, MPI_INFO_NULL);
 	MPI_File_read_all(refFile, A, nElements, MPI_DOUBLE, mpistatus); 
 #ifdef DEBUG
 	printf("P(%d): REF read successful \n", myrank_mpi);fflush(stdout);
-	printf("P(%d): max(A[0][])=%3.2f\n", myrank_mpi, rowMax(A, nA));
-	printf("P(%d): min(A[0][])=%3.2f\n", myrank_mpi, rowMin(A, nA));
+	printf("P(%d): min(A[0][])=%3.2f, max(A[0][])=%3.2f\n",
+		   	myrank_mpi, rowMin(A, nA), rowMax(A, nA));
+	fflush(stdout);
+	MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
-	//MPI_Type_free(&darray); /* clear darray just in case */
-	int mT = 1;
-	int nT = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-
 	/* read in test file */
-	gsizes[0]=1;	/* only one row in test matrix */
-
+	int mT = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nT = 1;
+	gsizes[0]=1;	/* only one column in test matrix */
+	gsizes[1]=M;
+	/* TODO: above seems inconsistent, but seg-faults if gsizes[1]=1 instead
+	 * this seems inconsistent, because A is column-major (samples==columns)
+	 * so T should be column major as well.  We'll see when the math is
+	 * working */
 	MPI_Type_create_darray(nprocs_mpi, myrank_mpi, ndims, 
 		gsizes, distribs, dargs,  psizes,
-		MPI_ORDER_FORTRAN, MPI_DOUBLE, &darray);
-	MPI_Type_commit(&darray);
+		MPI_ORDER_FORTRAN, MPI_DOUBLE, &darrayT);
+	MPI_Type_commit(&darrayT);
 #ifdef DEBUG
-	printf("P(%d): darray created successfully\n", myrank_mpi);
+	printf("P(%d): darrayT created successfully\n", myrank_mpi);fflush(stdout);
 #endif
 	fileStatus = MPI_File_open(MPI_COMM_WORLD, testFilename,  MPI_MODE_RDONLY, 
 			MPI_INFO_NULL, &testFile);
-	MPI_Type_size(darray, &locsize);
+	MPI_Type_size(darrayT, &locsize);
+#ifdef DEBUG
+	printf("P(%d): Testfile opened successfully\n", myrank_mpi);fflush(stdout);
+#endif
+	MPI_File_set_view(testFile, 0, MPI_DOUBLE, darrayT, datarep, MPI_INFO_NULL);
 	nElements = locsize / 8; /* doubles are 8 bytes per element */
 #ifdef DEBUG
-	printf("P(%d): N=%d\n", myrank_mpi, nElements); fflush(stdout);
+	printf("P(%d): nElements=%d\n", myrank_mpi, nElements); fflush(stdout);
 #endif
 	T = calloc(nElements,sizeof(double));	/* array to hold the test matrix, T */
 #ifdef DEBUG
 	printf("P(%d): %d doubles allocated for T.\n", myrank_mpi, nElements);
 #endif
-	MPI_File_set_view(testFile, 0, MPI_DOUBLE, darray, datarep, MPI_INFO_NULL);
 #ifdef DEBUG
 	printf("P(%d): begin TEST File read\n", myrank_mpi); fflush(stdout);
 #endif
 	MPI_File_read_all(testFile, T, nElements, MPI_DOUBLE, mpistatus); 
 #ifdef DEBUG
 	printf("P(%d): End TEST File read\n", myrank_mpi);
-	printf("P(%d): nElements=%d, nT=%d\n", myrank_mpi, nElements,nT);
-	printf("P(%d): max(T)=%3.2f\n", myrank_mpi, rowMax(T, nElements));
-	printf("P(%d): min(T)=%3.2f\n", myrank_mpi, rowMin(T, nElements));
+	printf("P(%d): nElements=%d, mT=%d, nT=%d,  min(T)=%3.2f, max(T)=%3.2f \n", 
+			myrank_mpi, nElements, mT, nT, rowMin(T, nElements), rowMax(T, nElements));
 	fflush(stdout);
 #endif
 
@@ -174,6 +181,7 @@ int main(int argc, char **argv) {
 		fflush(stdout);
 	}
 
+#ifdef DESCRIPTORS
 	/* initialize descriptors for each array that is to be shared among the
 	 * global process grid
 	 * A mxn, U mxm, S mxn, V nxn, T 1xn, X nxn, x 1xn, D nxn  
@@ -195,28 +203,33 @@ int main(int argc, char **argv) {
 	 *		the third argument to numroc_ should be the coordinate of the processor
 	 *		the fifth argument to numroc_ should be nprocs (total num processors) */
 	int mU = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int nU = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nU = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
 	int mS = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
 	int nS = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
 	int mV = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
 	int nV = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int mX = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mX = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
 	int nX = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int mD = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mD = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
 	int nD = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int mx = 1;
-	int nx = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mx = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nx = 1; 
 
-#ifdef DESCRIPTORS
 	/* initialize the descriptors for each global array */
+#ifdef VERBOSE
+	printf("P(%d): mA=%d, nA=%d \n", myrank_mpi, mA, nA);
+#endif
 	descinit_(descA, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mA, &info);
-	descinit_(descU, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mU, &info);
+#ifdef VERBOSE
+	printf("P(%d): arg mA=%d\n", myrank_mpi, mA);
+#endif
+	descinit_(descU, &M,   &M, &nb, &nb, &ZERO, &ZERO, &context, &mU, &info);
 	descinit_(descS, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mS, &info);
 	descinit_(descV, &N,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mV, &info);
-	descinit_(descX, &N,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mX, &info);
-	descinit_(descD, &N,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mD, &info);
-	descinit_(descx, &ONE, &N, &nb, &nb, &ZERO, &ZERO, &context, &mx, &info);
-	descinit_(descT, &ONE, &N, &nb, &nb, &ZERO, &ZERO, &context, &mT, &info);
+	descinit_(descX, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mX, &info);
+	descinit_(descD, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mD, &info);
+	descinit_(descx, &M, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &mx, &info);
+	descinit_(descT, &M, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &mT, &info);
 
 	/* initialize each array with the appropriate contents */
 	U = malloc(mU*nU*sizeof(double));	/* array to hold the orthonormal matrix, U */
@@ -228,50 +241,6 @@ int main(int argc, char **argv) {
 	
 	/* fill the local arrays (reference, test) from the global arrays */
 #endif /* DESCRIPTORS */
-#ifdef ORIGINAL
-	nprow = 2; npcol = 2; nb =2;
-	Cblacs_pinfo( &myrank_mpi, &nprocs_mpi ) ;
-	Cblacs_get( -1, 0, &ictxt );
-	Cblacs_gridinit( &ictxt, "Row", nprow, npcol );
-	Cblacs_gridinfo( ictxt, &nprow, &npcol, &myrow, &mycol );
-
-	/* determine the size of the matrix */
-	int M=5;
-	double *AA = (double*) malloc(M*M*sizeof(double));
-	/* fill the matrix */
-	for(i=0;i<M;i++ )
-		for(j=0;j<M;j++)
-			AA[i*M+j]=(2*i+3*j+1);
-
-	double *X = (double*) malloc(M*sizeof(double));
-	X[0]=1;X[1]=1;X[2]=0;X[3]=0;X[4]=1;
-
-	int descA[9],descx[9],descy[9];
-	int mA = numroc_( &M, &nb, &myrow, &ZERO, &nprow );
-	int nA = numroc_( &M, &nb, &mycol, &ZERO, &npcol );
-	int nx = numroc_( &M, &nb, &myrow, &ZERO, &nprow );
-	int my = numroc_( &M, &nb, &myrow, &ZERO, &nprow );
-	descinit_(descA, &M,   &M,  &nb,  &nb,  &ZERO, &ZERO, &ictxt, &mA, &info);
-	descinit_(descx, &M, &ONE,  &nb, &ONE,  &ZERO, &ZERO, &ictxt, &nx, &info);
-	descinit_(descy, &M, &ONE,  &nb, &ONE,  &ZERO, &ZERO, &ictxt, &my, &info);
-	double *x = (double*) malloc(nx*sizeof(double));
-	double *y = (double*) calloc(my,sizeof(double));
-	double *A = (double*) malloc(mA*nA*sizeof(double));
-	int sat,sut;
-	for(i=0;i<mA;i++){
-		for(j=0;j<nA;j++){
-			sat= (myrow*nb)+i+(i/nb)*nb;
-			sut= (mycol*nb)+j+(j/nb)*nb;
-			A[j*mA+i]=AA(sat,sut);
-		}
-	}
-
-
-	for(i=0;i<nx;i++){
-		sut= (myrow*nb)+i+(i/nb)*nb;
-		x[i]=X[sut];
-	}
-#endif
 #ifdef DOTHEMATH
 	/* calculate mean vector of reference set */
 	
@@ -292,14 +261,6 @@ int main(int argc, char **argv) {
 	/* print number of matching character */
 
 #endif /* DOTHEMATH */
-#ifdef ORIGINAL
-	double alpha = 1.0; double beta = 0.0;
-	pdgemv_("N",&M,&M,&alpha,A,&ONE,&ONE,descA,x,&ONE,&ONE,descx,&ONE,&beta,y,&ONE,&ONE,descy,&ONE);
-
-	Cblacs_barrier(ictxt,"A");
-	for(i=0;i<my;i++)
-		printf("rank=%d %.2f \n", myrank_mpi,y[i]);
-#endif /* ORIGINAL */
 	Cblacs_barrier(context, "A");
 	Cblacs_gridexit( 0 );
 #ifdef DEBUG
@@ -368,6 +329,6 @@ double rowMax(double * u, int rowLength){
 
 /* QUESTIONS:  
  *	(3) is the leading dimension the number of rows?? - no. LLD_A=number of rows of the local array that stores the blocks of A
- *	(4) why is T elements getting distributed assymetrically? [8192, 8192, 0, 0] 
+ *	(4) why is T elements getting distributed assymetrically? [8192, 8192, 0, 0] - cache alighment??
  *
  *	*/
