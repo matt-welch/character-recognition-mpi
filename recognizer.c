@@ -216,13 +216,21 @@ int main(int argc, char **argv) {
 	int nx = 1; 
 
 	/* initialize the descriptors for each global array */
-#ifdef VERBOSE
-	printf("P(%d): mA=%d, nA=%d \n", myrank_mpi, mA, nA);
+#ifdef DEBUG
+	printf("P(%d):mA=%d, nA=%d\tmU=%d, nU=%d\tmS=%d, nS=%d\tmV=%d, nV=%d\tmX=%d, nX=%d\tmD=%d, nD=%d\tmx=%d, nx=%d\tmT=%d, nT=%d\n", 
+			myrank_mpi,
+		   	mA, nA,
+		   	mU, nU,
+		   	mS, nS,
+		   	mV, nV,
+		   	mX, nX,
+		   	mD, nD,
+		   	mx, nx,
+			mT, nT);
+	fflush(stdout);
 #endif
 	descinit_(descA, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mA, &info);
-#ifdef VERBOSE
-	printf("P(%d): arg mA=%d\n", myrank_mpi, mA);
-#endif
+#ifdef DESCINIT
 	descinit_(descU, &M,   &M, &nb, &nb, &ZERO, &ZERO, &context, &mU, &info);
 	descinit_(descS, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mS, &info);
 	descinit_(descV, &N,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mV, &info);
@@ -230,7 +238,7 @@ int main(int argc, char **argv) {
 	descinit_(descD, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mD, &info);
 	descinit_(descx, &M, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &mx, &info);
 	descinit_(descT, &M, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &mT, &info);
-
+#endif
 	/* initialize each array with the appropriate contents */
 	U = malloc(mU*nU*sizeof(double));	/* array to hold the orthonormal matrix, U */
 	S = malloc(mS*nS*sizeof(double));	/* array to hold the singular values matrix, S */
@@ -243,20 +251,33 @@ int main(int argc, char **argv) {
 #endif /* DESCRIPTORS */
 #ifdef DOTHEMATH
 	/* calculate mean vector of reference set */
+	//for(j=1:N)
+	//PvAXPY( N, ALPHA, X, IX, JX, DESCX, INCX, Y, IY, JY, DESCY, INCY ) 
+	// sum vectors with: Y(:,j) = AX + Y
+	//
 	
 	/* subtract the mean from the test image and the reference set (mean center) */
+	// T = -1*meanVec + T
+	// for(i=1:N)
+	//		A[][j] = -1*meanVec + T
+	//
 
 	/* perform svd on the normalized A to get basis matrices, U & V	*/
 	/* pdgesvd_() */
 
 	/* Multiply X=U'A  and  x=U'T (corrected from x=UU'T) */
+	// X=U'A by pdgemm(), 
+	// x=U'T by pdgemv()
 
 	/* Find mimimum:
 	 * Subtract x from each column of X to make D */
+	// D(:,j) = X(:,j) + -1 * x
 
 	/* caculate sqrt(D'D) */
 
+
 	/* find the minimum diagonal element, this is the matching character */
+
 
 	/* print number of matching character */
 
