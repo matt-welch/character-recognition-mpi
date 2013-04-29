@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
 	int i, j, k;
 	int info=0,itemp;
 	int ZERO=0,ONE=1; /* constants for passing into pblacs routines */
-	double *A, *U, *S, *V, *X, *D, *x, *T; /* local arrays */
+	double *A, *U, *UT, *S, *V, *X, *D, *x, *y, *T; /* local arrays */
 
 	/* timing harness for IOPS */
 	gettimeofday(&ioStart, NULL);
@@ -195,25 +195,29 @@ int main(int argc, char **argv) {
 
 	/* determine the size of the matrix */
 
-	int descA[9],descT[9],descU[9],descS[9],descV[9],descX[9],descx[9],descD[9];
+	int descA[9],descT[9],descU[9],descS[9],descV[9],descX[9],descx[9],descy[9],descD[9];
 
 	/* get num rows, columns for each local matrix */
 	/* the following is based on netlib.org/scalapack/tools/numroc.f
 	 * but it disagrees with the examples in Dr. Speyer's code namely: 
 	 *		the third argument to numroc_ should be the coordinate of the processor
 	 *		the fifth argument to numroc_ should be nprocs (total num processors) */
-	int mU = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int nU = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int mS = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int nS = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int mV = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int nV = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int mX = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int nX = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int mD = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int nD = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int mx = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
-	int nx = 1; 
+	int mU  = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nU  = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mUT = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nUT = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mS  = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nS  = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mV  = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nV  = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mX  = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nX  = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mD  = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nD  = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int mx  = numroc_( &M, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int nx  = 1; 
+	int my  = numroc_( &N, &nb, &myrank_mpi, &ZERO, &nprocs_mpi);
+	int ny  = 1; 
 
 	/* initialize the descriptors for each global array */
 #ifdef DEBUG
@@ -232,49 +236,80 @@ int main(int argc, char **argv) {
 	descinit_(descA, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mA, &info);
 #ifdef DESCINIT
 	descinit_(descU, &M,   &M, &nb, &nb, &ZERO, &ZERO, &context, &mU, &info);
+	descinit_(descUT, &M,   &M, &nb, &nb, &ZERO, &ZERO, &context, &mUT, &info);
 	descinit_(descS, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mS, &info);
 	descinit_(descV, &N,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mV, &info);
 	descinit_(descX, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mX, &info);
 	descinit_(descD, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mD, &info);
 	descinit_(descx, &M, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &mx, &info);
+	descinit_(descy, &N, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &my, &info);
 	descinit_(descT, &M, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &mT, &info);
 #endif
 	/* initialize each array with the appropriate contents */
-	U = malloc(mU*nU*sizeof(double));	/* array to hold the orthonormal matrix, U */
-	S = malloc(mS*nS*sizeof(double));	/* array to hold the singular values matrix, S */
-	V = malloc(mV*nV*sizeof(double));	/* array to hold the orthonormal matrix, V */
-	X = malloc(mX*nX*sizeof(double));	/* array to hold the matrix, X */
-	D = malloc(mD*nD*sizeof(double));	/* array to hold the matrix, D */
-	x = malloc(mx*nx*sizeof(double));	/* array to hold the matrix, x */
+	U  = malloc(mU * nU * sizeof(double));	/* array to hold the orthonormal matrix, U */
+	UT = malloc(mUT* nUT* sizeof(double));	/* array to hold the orthonormal matrix, U */
+	S  = malloc(mS * nS * sizeof(double));	/* array to hold the singular values matrix, S */
+	V  = malloc(mV * nV * sizeof(double));	/* array to hold the orthonormal matrix, V */
+	X  = malloc(mX * nX * sizeof(double));	/* array to hold the matrix, X */
+	D  = malloc(mD * nD * sizeof(double));	/* array to hold the matrix, D */
+	x  = malloc(mx * nx * sizeof(double));	/* array to hold the matrix, x */
+	y  = malloc(my * ny * sizeof(double));	/* array to hold the ones matrix, y */
 	
 	/* fill the local arrays (reference, test) from the global arrays */
 #endif /* DESCRIPTORS */
 #ifdef DOTHEMATH
+	double alpha = 1.0; double beta = 0.0; double n_reciprocal = 1.0 / N;
+	/* Function prototypes: 
+	 * Y = aAX + bY		PvAXPY( N, ALPHA, X, IX, JX, DESCX, INCX, Y, IY, JY, DESCY, INCY )  
+	 * C = aAB + bC		PvGEMM( TRANSA, TRANSB, M, N, K, ALPHA, A, IA, JA, DESCA, B, IB, JB, DESCB, BETA, C, IC, JC, DESCC ) 
+	 * C = bC + aA'		PvTRAN( M, N, ALPHA, A, IA, JA, DESCA, BETA, C, IC, JC, DESCC ) 
+	 * Y = aAX + bY		PvGEMV( TRANS="N", M, N, ALPHA, A, IA, JA, DESCA, X, IX, JX, DESCX, INCX, BETA, Y, IY, JY, DESCY, INCY ) 
+	 * Y = aA'X + bY	PvGEMV( TRANS="T", M, N, ALPHA, A, IA, JA, DESCA, X, IX, JX, DESCX, INCX, BETA, Y, IY, JY, DESCY, INCY ) 
+	 * */
+	
 	/* calculate mean vector of reference set */
-	//for(j=1:N)
-	//PvAXPY( N, ALPHA, X, IX, JX, DESCX, INCX, Y, IY, JY, DESCY, INCY ) 
-	// sum vectors with: Y(:,j) = AX + Y
+	/* make y a ones matrix for calculating mean column of A */
+	for (i = 0; i < my; i++) {
+		y[i]=1;
+	}
 	//
+	// sum vectors with: Y(:,j) = AX + Y
+	// x = 1/72 * A * y + 0 * x
+//	pdgemv_("N",&M,&N,&n_reciprocal,
+//			A,&ONE,&ONE,descA,
+//			y,&ONE,&ONE,descy,&ONE,
+//			&beta,x,&ONE,&ONE,descx,&ONE);
+
 	
 	/* subtract the mean from the test image and the reference set (mean center) */
 	// T = -1*meanVec + T
 	// for(i=1:N)
 	//		A[][j] = -1*meanVec + T
+	// pdaxpy();
 	//
+//	for(i=0;i<nA;i++){
+//		A[
+//	}
 
 	/* perform svd on the normalized A to get basis matrices, U & V	*/
 	/* pdgesvd_() */
 
 	/* Multiply X=U'A  and  x=U'T (corrected from x=UU'T) */
+	// U' = PDTRAN() (L3 PBLAS)
 	// X=U'A by pdgemm(), 
-	// x=U'T by pdgemv()
+	// x=U'T+0*x by pdgemv() 
+//	pdgemv_("T",&M,&M,&alpha,
+//			U,&ONE,&ONE,descU,
+//			T,&ONE,&ONE,descT,&ONE,
+//			&beta,x,&ONE,&ONE,descx,&ONE);
+	// shouldn't &ONE,&ONE be &ZERO,&ZERO??
 
 	/* Find mimimum:
 	 * Subtract x from each column of X to make D */
 	// D(:,j) = X(:,j) + -1 * x
 
 	/* caculate sqrt(D'D) */
-
+	//	D' = PDTRAN() (L3 PBLAS)
 
 	/* find the minimum diagonal element, this is the matching character */
 
