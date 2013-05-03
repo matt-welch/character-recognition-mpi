@@ -21,6 +21,10 @@ debug: recognizer.c
 	mpicc -o recognizer recognizer.c -DDEBUG -I$(IMKLPATH) -L$(MKLPATH) -lmkl_scalapack -lmkl_blacs_openmpi_lp64 -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -lpthread -openmp -limf
 	ctags --c-kinds=+defglmpstux -R *.c *.h
 
+verbose: recognizer.c
+	mpicc -o recognizer recognizer.c -DDEBUG -DVERBOSE  -I$(IMKLPATH) -L$(MKLPATH) -lmkl_scalapack -lmkl_blacs_openmpi_lp64 -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -lpthread -openmp -limf
+	ctags --c-kinds=+defglmpstux -R *.c *.h
+
 demo:  pdgemv.c prepare_env.sh
 	mpicc -o pdgemv pdgemv.c -I$(IMKLPATH) -L$(MKLPATH) -lmkl_scalapack -lmkl_blacs_openmpi_lp64 -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -lpthread -openmp -limf
 	ctags --c-kinds=+defglmpstux -R *.c *.h
