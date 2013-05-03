@@ -88,32 +88,35 @@ int main(int argc, char **argv) {
 	printf("nprow=%d, npcol=%d\n", nprow, npcol);
 #endif
 	
-
-	/* get num rows, columns for each local matrix 
-	 *		the third argument to numroc_ should be the row or col coord of the processor
-	 *		the fifth argument to numroc_ should be nprocs (total num processors) */
 	/* determine number of processor rows/columns based on nprocs_mpi */
-	int mA = numroc_( &M, &nb, &myrow, &ZERO, &nprocs_mpi);
-	int nA = numroc_( &N, &nb, &mycol, &ZERO, &nprocs_mpi);
-	int mT = numroc_( &M, &nb, &myrow, &ZERO, &nprocs_mpi);
+	/* use numroc to get local num rows/columns for each local matrix 
+	 * Argument analysis: numroc (n, nb, iproc, isrcproc, nprocs);
+	 * 1) n		= num rows/cols of global array
+	 * 2) nb	= row/col block size
+	 * 3) iproc	= the row/col coord of the processor
+	 * 4) isrcproc = the process row/col over which the first row/col of the global matrix is distributed
+	 * 5) nprocs = number of rows (nprow) or columns (npcol) in the process grid */
+	int mA = numroc_( &M, &nb, &myrow, &ZERO, &nprow);
+	int nA = numroc_( &N, &nb, &mycol, &ZERO, &npcol);
+	int mT = numroc_( &M, &nb, &myrow, &ZERO, &nprow);
 	int nT = 1;
-	int mU  = numroc_( &M, &nb, &myrow, &ZERO, &nprocs_mpi);
-	int nU  = numroc_( &M, &nb, &mycol, &ZERO, &nprocs_mpi);
-	int mUT = numroc_( &M, &nb, &myrow, &ZERO, &nprocs_mpi);
-	int nUT = numroc_( &M, &nb, &mycol, &ZERO, &nprocs_mpi);
-	int mS  = numroc_( &M, &nb, &myrow, &ZERO, &nprocs_mpi);
-	int nS  = numroc_( &N, &nb, &mycol, &ZERO, &nprocs_mpi);
-	int mV  = numroc_( &N, &nb, &myrow, &ZERO, &nprocs_mpi);
-	int nV  = numroc_( &N, &nb, &mycol, &ZERO, &nprocs_mpi);
-	int mVT  = numroc_( &N,&nb, &myrow, &ZERO, &nprocs_mpi);
-	int nVT  = numroc_( &N,&nb, &mycol, &ZERO, &nprocs_mpi);
-	int mX  = numroc_( &M, &nb, &myrow, &ZERO, &nprocs_mpi);
-	int nX  = numroc_( &N, &nb, &mycol, &ZERO, &nprocs_mpi);
-	int mD  = numroc_( &M, &nb, &myrow, &ZERO, &nprocs_mpi);
-	int nD  = numroc_( &N, &nb, &mycol, &ZERO, &nprocs_mpi);
-	int mx  = numroc_( &M, &nb, &myrow, &ZERO, &nprocs_mpi);
+	int mU  = numroc_( &M, &nb, &myrow, &ZERO, &nprow);
+	int nU  = numroc_( &M, &nb, &mycol, &ZERO, &nprow);
+	int mUT = numroc_( &M, &nb, &myrow, &ZERO, &nprow);
+	int nUT = numroc_( &M, &nb, &mycol, &ZERO, &npcol);
+	int mS  = numroc_( &M, &nb, &myrow, &ZERO, &nprow);
+	int nS  = numroc_( &N, &nb, &mycol, &ZERO, &npcol);
+	int mV  = numroc_( &N, &nb, &myrow, &ZERO, &nprow);
+	int nV  = numroc_( &N, &nb, &mycol, &ZERO, &npcol);
+	int mVT  = numroc_( &N,&nb, &myrow, &ZERO, &nprow);
+	int nVT  = numroc_( &N,&nb, &mycol, &ZERO, &npcol);
+	int mX  = numroc_( &M, &nb, &myrow, &ZERO, &nprow);
+	int nX  = numroc_( &N, &nb, &mycol, &ZERO, &npcol);
+	int mD  = numroc_( &M, &nb, &myrow, &ZERO, &nprow);
+	int nD  = numroc_( &N, &nb, &mycol, &ZERO, &npcol);
+	int mx  = numroc_( &M, &nb, &myrow, &ZERO, &nprow);
 	int nx  = 1; 
-	int my  = numroc_( &N, &nb, &myrow, &ZERO, &nprocs_mpi);
+	int my  = numroc_( &N, &nb, &myrow, &ZERO, &nprow);
 	int ny  = 1; 
 
 #ifdef VERBOSE
@@ -249,12 +252,9 @@ int main(int argc, char **argv) {
 	 *		m=samples (letters)=72
 	 *		n=linear binary file length  = 128x128 = 16384
 	*/
-	int LLD = mA+1;
-	descinit_(descA,  &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &LLD, &info);
-#ifdef DONTRUN
 	/* initialize the descriptors for each global array */
-	LLD = mA > 1 ? mA : 1;
-	printf("LLD=%d\n",LLD);
+	int LLD = mA;
+	descinit_(descA,  &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &LLD, &info);
 	descinit_(descA,  &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &LLD, &info);
 	LLD = mU  > 1 ? mU  : 1;
 	descinit_(descU,  &M,   &M, &nb, &nb, &ZERO, &ZERO, &context, &LLD, &info);
@@ -276,7 +276,6 @@ int main(int argc, char **argv) {
 	descinit_(descy,  &N, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &LLD, &info);
 	LLD = mT  > 1 ? mT  : 1;
 	descinit_(descT,  &M, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &LLD, &info);
-#endif
 	
 	
 #endif /* DESCRIPTORS */
