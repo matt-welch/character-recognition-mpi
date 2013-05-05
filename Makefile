@@ -13,26 +13,22 @@
 
 recognizer: recognizer.c
 	mpicc -o recognizer recognizer.c -I$(IMKLPATH) -L$(MKLPATH) -lmkl_scalapack -lmkl_blacs_openmpi_lp64 -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -lpthread -openmp -limf
-	ctags --c-kinds=+defglmpstux -R *.c *.h
 
-all: recognizer demo
+all: recognizer demo tagit
 
 debug: recognizer.c
 	mpicc -o recognizer recognizer.c -DDEBUG -I$(IMKLPATH) -L$(MKLPATH) -lmkl_scalapack -lmkl_blacs_openmpi_lp64 -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -lpthread -openmp -limf
-	ctags --c-kinds=+defglmpstux -R *.c *.h
 
-verbose: recognizer.c
+verbose: recognizer.c tagit
 	mpicc -o recognizer recognizer.c -DDEBUG -DVERBOSE  -I$(IMKLPATH) -L$(MKLPATH) -lmkl_scalapack -lmkl_blacs_openmpi_lp64 -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -lpthread -openmp -limf
-	ctags --c-kinds=+defglmpstux -R *.c *.h
 
 demo:  pdgemv.c prepare_env.sh
 	mpicc -o pdgemv pdgemv.c -I$(IMKLPATH) -L$(MKLPATH) -lmkl_scalapack -lmkl_blacs_openmpi_lp64 -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -lpthread -openmp -limf
-	ctags --c-kinds=+defglmpstux -R *.c *.h
 
 clean: 
 	rm -rf pdgemv *.o recognizer
 
-tidy: clean
+tidy: tagit clean
 	rm -rf *~ .*~ *.swp .*.swp
 
 rundemo: pdgemv
@@ -41,5 +37,7 @@ rundemo: pdgemv
 run: recognizer
 	mpiexec -np 4 ./recognizer
 
+tagit:  
+	ctags --c-kinds=+defglmpstux -R *.c *.h
 # location of the mkl_scalapack library: 
 #/packages/intel/cmkl/10.0.2.018/lib/em64t/libmkl_scalapack.a 
