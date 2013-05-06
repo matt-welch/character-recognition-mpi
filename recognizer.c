@@ -18,11 +18,10 @@
 #include <time.h>
 #include <sys/time.h>
 
-#define ALERT
 #define DEBUG
 #define DESCRIPTORS
 //#define DOTHEMATH
-#define READTESTFILE
+#define FREEMEMORY
 
 #define A(i,j) A[(i)*mA+(j)]
 #define Cp(i,j) Cp[(i)*mA+(j)]
@@ -62,11 +61,12 @@ int main(int argc, char **argv) {
 
 	/************  BLACS ***************************/
 	int context=0, nprow, npcol, myrow, mycol, ndims=2;
-	int nb = 4;	/* number of blocks per side */
-	int i, j, k, count=0;
+	int nb = 2;	/* number of blocks per side */
+	int i, j, k, idx, count=0;
 	int info=0,itemp;
 	int ZERO=0,ONE=1; /* constants for passing into pblacs routines */
 	double *A, *Cp, *T, *U, *UT, *S, *V, *VT, *X, *D, *DT, *x, *y; /* local arrays */
+	double ScalarOne[1] = {1};
 	/* matrix size is already known: 72*(128*128)= 72*16384 */
 	int M=16384, N=72, nElements;
 #ifdef VERBOSE
@@ -75,7 +75,7 @@ int main(int argc, char **argv) {
 
 	/* array descriptors for matrices */
 	int descA[9],descCp[9],descT[9],descU[9],descUT[9],descS[9],descV[9],descVT[9],descX[9],
-		descD[9],descDT[9],descx[9],descy[9];
+		descD[9],descDT[9],descx[9],descy[9], descScalarOne[9];
 
 	/* define processor grid topology: 
 	 * Square grid, nprocs x nprocs 
@@ -122,6 +122,9 @@ int main(int argc, char **argv) {
 	int nx  = numroc_(&ONE,&nb, &mycol, &ZERO, &npcol); 
 	int my  = numroc_( &N, &nb, &myrow, &ZERO, &nprow);
 	int ny  = numroc_(&ONE,&nb, &mycol, &ZERO, &npcol);   
+	int mO  = numroc_(&ONE,&nb, &myrow, &ZERO, &nprow);
+	int nO  = numroc_(&ONE,&nb, &mycol, &ZERO, &npcol);   
+
 
 #ifdef VERBOSE
 	printf("P(%d):mA=%d,nA=%d  mU=%d,nU=%d  mS=%d,nS=%d  mV=%d,nV=%d  mX=%d,nX=%d  mD=%d,nD=%d  mx=%d,nx=%d  mT=%d,nT=%d\n", 
@@ -148,6 +151,10 @@ int main(int argc, char **argv) {
 	DT = malloc(nD * mD * sizeof(double));	/* array to hold the matrix, D */
 	x  = malloc(mx * nx * sizeof(double));	/* array to hold the matrix, x */
 	y  = malloc(my * ny * sizeof(double));	/* array to hold the ones matrix, y */
+
+	/* initialize work array for SVD later */
+	int lwork = -1;//mA*nA;
+	double * work = malloc(mA*nA*sizeof(double));
 
 	/* IO with reference matrix and test matrix */
 	/* timing harness for IOPS */
@@ -184,7 +191,7 @@ int main(int argc, char **argv) {
 #ifdef VERBOSE
 	printf("P(%d): nElements=%d\n", myrank_mpi, nElements); fflush(stdout);
 #endif
-	A		= malloc(nElements*sizeof(double));  /* array to hold the local reference matrix, A */
+	A	= malloc(nElements*sizeof(double));  /* array to hold the local reference matrix, A */
 	Cp	= malloc(nElements*sizeof(double));  /* array to hold the local copy of ref matrix, Cp */
 	MPI_File_set_view(refFile, 0, MPI_DOUBLE, darrayA, datarep, MPI_INFO_NULL);
 	MPI_File_read_all(refFile, A, nElements, MPI_DOUBLE, mpistatus); 
@@ -251,7 +258,6 @@ int main(int argc, char **argv) {
 		fflush(stdout);
 	}
 
-#ifdef DESCRIPTORS
 	/* initialize descriptors for each array that is to be shared among the
 	 * global process grid
 	 * A mxn, U mxm, S mxn, V nxn, T nx1, X mxn, x nx1, D mxn  
@@ -260,21 +266,47 @@ int main(int argc, char **argv) {
 	*/
 	/* initialize the descriptors for each global array */
 	descinit_(descA,  &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mA, &info);
-	descinit_(descCp,  &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mA, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
+	descinit_(descCp, &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mA, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descU,  &M,   &M, &nb, &nb, &ZERO, &ZERO, &context, &mU, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descUT, &M,   &M, &nb, &nb, &ZERO, &ZERO, &context, &mUT, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descS,  &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mS, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descV,  &N,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mV, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descVT, &N,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mV, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descX,  &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mX, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descD,  &M,   &N, &nb, &nb, &ZERO, &ZERO, &context, &mD, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descDT, &N,   &M, &nb, &nb, &ZERO, &ZERO, &context, &nD, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descx,  &M, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &mx, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descy,  &N, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &my, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	descinit_(descT,  &M, &ONE, &nb, &nb, &ZERO, &ZERO, &context, &mT, &info);
+	if(info){printf("P(%d): Descriptor Init fail, code(%d)\n", myrank_mpi, info);}
 	
-#endif /* DESCRIPTORS */
 	double alpha = 1.0; double beta = 0.0; double n_reciprocal = 1.0 / N;
+	/* calculate mean vector of reference set */
+	/* make y a ones matrix for calculating mean column of A */
+	for (i = 0; i < my; i++) {
+		y[i]=1;
+	}
+	// sum vectors with: X = AY + 0*X
+	// x = 1/72 * A * y + 0 * x
+	alpha = 1.0/N; // 1/N for mean
+	beta = 0.0; // do not add the additional vector 
+	pdgemv_("N",&M,&N,
+			&alpha,A,&ONE,&ONE,descA,
+			       y,&ONE,&ONE,descy,&ONE,
+			&beta, x,&ONE,&ONE,descx,&ONE);
+
 	/* Function prototypes: 
 	 * Y = aAX  + bY	PvAXPY( N, ALPHA, X, IX, JX, DESCX, INCX, Y, IY, JY, DESCY, INCY )  
 	 * C = aAB  + bC	PvGEMM( TRANSA, TRANSB, M, N, K, ALPHA, A, IA, JA, DESCA, B, IB, JB, DESCB, BETA, C, IC, JC, DESCC ) 
@@ -283,21 +315,6 @@ int main(int argc, char **argv) {
 	 * Y = aA'X + bY	PvGEMV( TRANS="T", M, N, ALPHA, A, IA, JA, DESCA, X, IX, JX, DESCX, INCX, BETA, Y, IY, JY, DESCY, INCY ) 
 	 * */
 	
-#ifdef DOTHEMATH
-	/* calculate mean vector of reference set */
-	/* make y a ones matrix for calculating mean column of A */
-	for (i = 0; i < my; i++) {
-		y[i]=1;
-	}
-	// sum vectors with: X = AY + 0*X
-	// x = 1/72 * A * y + 0 * x
-	alpha = 1.0/72; // 1/N for mean
-	beta = 0.0; // do not add the additoinal vector 
-	pdgemv_("N",&M,&N,&alpha,
-			A,&ONE,&ONE,descA,
-			y,&ONE,&ONE,descy,&ONE,
-			&beta,x,&ONE,&ONE,descx,&ONE);
-
 #ifdef VERYVERBOSE
 	if (myrank_mpi==0) {
 		for (i = 0; i < mx; i++) {
@@ -306,64 +323,107 @@ int main(int argc, char **argv) {
 	}
 #endif
 	
-	Cblacs_barrier(context, "A");
 	/* (1) subtract the mean from the test image and the reference set (mean center) 
 	 * T is the test image
 	 * x is the mean of the reference characters */
-	for(i=0;i<mT;++i){ 
-		//printf("T[%d]=%3.2f  x[%d]=%3.2f\n",i,T[i],i,x[i]);
-		T[i] = T[i] - x[i];
+	//* C = aAB  + bC	PvGEMM( TRANSA, TRANSB, M, N, K, ALPHA, A, IA, JA, DESCA, B, IB, JB, DESCB, BETA, C, IC, JC, DESCC ) 
+	// T = -1 * x * y + 1.0 * T
+#ifdef MEANCENTER
+	if(nT>0 && nx>0){
+#ifdef DEBUG
+		printf("P(%d): %d columns of x allocated - performing MC on T.\n", myrank_mpi, nx);
+		printf("P(%d): len-T = %d,  len-x = %d\n", myrank_mpi, mT*nT, mx*nx);
+		fflush(stdout);
+#endif
+		for(i=0;i<mx;++i){ 
+			//printf("T[%d]=%3.2f  x[%d]=%3.2f\n",i,T[i],i,x[i]);
+			T[i] = T[i] - x[i];
+	//		if(i%8 == 0) printf("P(%d): T[%d]=%3.2f\n",myrank_mpi, i, T[i]);
+		}
+	}else{
+#ifdef DEBUG
+		printf("P(%d): no columns of x allocated - skipping MC-T.\n", myrank_mpi);
+#endif
+		
 	}
+	/*alpha=-1.0;
+	beta = 1.0;
+	pdgemm_("N","T", &M, &N, &ONE,
+			&alpha, x, &ONE, &ONE, descx,
+			ScalarOne, &ONE, &ONE, descScalarOne,
+			&beta, T, &ONE, &ONE, descT);*/
+#ifdef DEBUG
+	printf("P(%d):mA=%d,nA=%d  mU=%d,nU=%d  mx=%d,nx=%d  mT=%d,nT=%d\n", 
+		myrank_mpi,mA, nA,		mU, nU,	   	mx, nx,	   	mT, nT);
+	Cblacs_barrier(context, "A");
+#endif
 	/* Subtract the mean vector from each column of A
 	 * inefficient because can't find a scalapack routine for it */
 	/* TODO: block the loops for more efficient cache utilization */
-	for (j = 0; i < nA; j++) {
-		for(i = 0; i < mA; i++)
-			A(i,j) = A(i,j) - x(i);
+	/* make a copy of A because it will be overwritten by SVD */
+	// sum vectors with: C = AY + 0*X
+	//* C = aAB  + bC	PvGEMM( TRANSA, TRANSB, M, N, K, ALPHA, A, IA, JA, DESCA, B, IB, JB, DESCB, BETA, C, IC, JC, DESCC ) 
+	// A = -1 * x * y + 1.0 * A
+	// 
+	alpha=-1.0;
+	beta = 1.0;
+	pdgemm_("N","T", &M, &N, &ONE,
+			&alpha, x, &ONE, &ONE, descx,
+			y, &ONE, &ONE, descy,
+			&beta, A, &ONE, &ONE, descA);
+	printf("p(%d): Mean Centering is DONE!!!!\n", myrank_mpi);
+#endif /* MEANCENTER */
+	for ( i = 0; i < nElements; i++) {
+		A[i] = Cp[i];
 	}
 
 #ifdef DEBUG
-	printf("P(%d):mA=%d,nA=%d  mU=%d,nU=%d  mS=%d,nS=%d  mVT=%d,nVT=%d\n", 
-			myrank_mpi,
-		   	mA, nA,
-		   	mU, nU,
-		   	mS, nS,
-		   	mV, nV);
-	fflush(stdout);
+	printf("P(%d): done with data copy, ready for SVD\n", myrank_mpi);
 #endif
 	/* (2) perform svd on the normalized A to get basis matrices, U & V	*/
-	/* make a copy of A because it will be overwritten by SVD */
-	int lwork = mA*nA;
-	double * work = NULL;
-#ifdef DEBUG		
-	Cblacs_barrier(context, "A");
-	printf("P(%d): done with mean centering, begin copy A\n", myrank_mpi);
+
+#ifdef DEBUG
+	printf("P(%d): lwork = %d, work[0] = %3.2f, work-len=%d\n", myrank_mpi, lwork, work[0], mA*nA);
 	fflush(stdout);
-#endif
-	for (i = 0; i < mA; i++) {
-		Cp[i] = A[i];
-	}
-#ifdef DEBUG		
 	Cblacs_barrier(context, "A");
-	printf("P(%d): done with copy A, begin SVD\n", myrank_mpi);
-	fflush(stdout);
 #endif
-	/* pdgesvd_() 
-	 * PDGESVD(JOBU,JOBVT,M,N,    JOBU, JOBVT = 'V' if want values returned
-	 *		A,IA,JA,DESCA,S,
+	/*PDGESVD(JOBU,JOBVT,M,N,    JOBU, JOBVT = 'V' if want values returned
+	 *		A,IA,JA,DESCA,S,		all of IX,IX should be &ONE typically
 	 *		U,IU,JU,DESCU,
 	 *		VT,IVT,JVT,DESCVT,
 	 *		WORK,LWORK,INFO)*/
-	work =  malloc(lwork * sizeof(double));
-	pdgesvd_("V", "N", &M, &N, 
-			A, &mA, &nA, descA, S,
-			U, &mU, &nU, descU,
-			VT,&mV, &nV, descVT,
-			work, &lwork, &info); /* when lwork=0, work is ignored */
-	printf("P(%d): lwork = %d\n",myrank_mpi,lwork);
+	double wkopt; 
+	pdgesvd_("V", "V", &M, &N, 
+			A, &ONE, &ONE, descA, 
+			S,
+			U, &ONE, &ONE, descU,
+			VT,&ONE, &ONE, descVT,
+			&wkopt, &lwork, &info); /* init lwork=-1, to get size of work*/
+	lwork = (int)wkopt;
 #ifdef DEBUG
-	printf("P(%d): SVD complete\n", myrank_mpi);
+	printf("P(%d): SVD1 done: lwork = %d, wkopt = %3.2f, work-len=%d\n", myrank_mpi, lwork, wkopt, mA*nA);
+	fflush(stdout);
 #endif
+	work = malloc(lwork * sizeof(double));
+#ifdef DEBUG		
+	printf("P(%d): done with malloc work, begin SVD\n", myrank_mpi);
+	printf("P(%d): lwork = %d\n",myrank_mpi,lwork); 
+	fflush(stdout);
+	Cblacs_barrier(context, "A");
+#endif
+	pdgesvd_("V", "N", &M, &N, 
+			A, &ONE, &ONE, descA, 
+			S,
+			U, &ONE, &ONE, descU,
+			VT,&ONE, &ONE, descVT,
+			work, &lwork, &info);
+#ifdef DEBUG
+	printf("P(%d): Second SVD complete\n", myrank_mpi);
+	fflush(stdout);
+	Cblacs_barrier(context, "A");
+#endif
+
+#ifdef DOTHEMATH
 	/* (3) Projections: Multiply X=U'A  and  x=U'T (corrected from UU'T) */
 	// C = alphaA'B+betaC
 	// pdgemm (transa, transb, m, n, k, 
@@ -387,53 +447,56 @@ int main(int argc, char **argv) {
 
 	/* (4) Find mimimum:
 	 * Subtract x from each column of X to make D */
-	// D(:,j) = X(:,j) + -1 * x
+	// D(:,j) = X(:,j) - x
 	/* Subtract x vector from each column of X to form D
 	 * inefficient because can't find a scalapack routine for it */
 	/* TODO: block the loops for more efficient cache utilization */
-	for (j = 0; i < nX; j++) {
-		for(i = 0; i < mX; i++)
-			D[i*mX+j] = X[i*mX +j] - x(i);
+	for (j = 0; j < nX; j++) {
+		for(i = 0; i < mX; i++){
+			idx = i*mX+j;
+			DT[idx] = D[idx] = X[idx] - x(i);
+		}
 	}
 
 	/* (5) caculate D'D	(corrected from sqrt(D'D) which is unnecessary) 
 	 * copy D to another matrix then run pdgemv with transpose the copy of D */
 	/* use VT as D'D since it's NxN and don't need it anymore */
+	for (i = 0; i < mD*nD; i++) {
+		DT[i]=D[i];
+	}
+	alpha=1.0; beta=0.0;
 	pdgemm_("T","N", &N, &N, &mD,
 			&alpha, DT, &ONE, &ONE, descDT,
 			D, &ONE, &ONE, descD, 
 			&beta, VT, &ONE, &ONE, descVT);
 
 	/* find the minimum diagonal element, this is the matching character */
-	int min  = VT[0];
+	/* TODO: how do we do this across all nodes? */
+	int minVal  = VT[0];
 	for (i = 0; i < mV; i++) {
-		if( VT[i*mV + i] < min ) {
-			min = VT[i*mV + i];
-			count = i;
+		idx = i*mV + i;
+		if( VT[idx] < minVal ) {
+			minVal = VT[idx];
+			count = i;	/* count is use dhere as the matching sample of the reference vector */
 		}
 	}
 
-#endif
+#endif /* DOTHEMATH */
+	
+	Cblacs_barrier(context, "A");
 	/* print number of matching character */
-	if(myrank_mpi==0) printf("The Character is number %d  !!!!!    ;-)\n", count);
+	printf("P(%d): Character is number %d, value=%3.2f  !!!!!  ;-)\n", 
+			myrank_mpi, count+1, VT[count*mV+count]);
 #ifdef DEBUG
 	printf("P(%d) Waiting on barrier\n", myrank_mpi);
-#endif
 	Cblacs_barrier(context, "A");
-	Cblacs_gridexit( 0 );
+#endif
+
+#ifdef FREEMEMORY
 	/* free allocated arrays */
-	free(A);
-	free(Cp);
-	free(T);
-	free(U);
-	free(UT);
-	free(S); 
-	free(V);
-	free(VT);
-	free(X);
-	free(D);
-	free(x);
-	free(y);
+	free(A); free(Cp); free(T); free(U); free(UT); free(S); free(V); free(VT); 
+	free(X); free(D); free(x); free(y);
+#endif /* FREEMEMORY */
 
 	/* finalize timing harness */
     /* timekeeping - only needs to be executed by root*/ 
@@ -445,6 +508,8 @@ int main(int argc, char **argv) {
 		printf(" Total Time = %3.4f\n", preciseTime );  
 		fflush(stdout);
 	}
+	Cblacs_barrier(context, "A");
+	Cblacs_gridexit( 0 );
 	MPI_Finalize();
 	return 0;
 }
@@ -494,5 +559,3 @@ double rowMax(double * u, int rowLength){
  *		element is the matching character
  */
 
-/* QUESTIONS:  
- *	*/
