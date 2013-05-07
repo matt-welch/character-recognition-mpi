@@ -36,7 +36,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-#define DEBUG
+//#define DEBUG
 
 #define A(i,j) A[(i)*mA+(j)]
 #define Cp(i,j) Cp[(i)*mA+(j)]
@@ -364,27 +364,28 @@ int main(int argc, char **argv) {
 			&beta, A, &ONE, &ONE, descA);
 	/* T is the test image
 	 * x is the mean of the reference characters */
-	// mean center T with: T = Ax + 1.0*T
-	// x = -1.0 * A * x + 1.0 * T
+	// mean center T with: T = -1*Ay + 1.0*T
+	// x = -1.0/72 * A * y + 1.0 * T
 	alpha = -1.0/72;
 	beta = 1.0;
-	/* TODO: should &mA,&nA be &M,&N instead?? */
-	pdgemv_("T",&M,&ONE,
+	pdgemv_("N",&M,&ONE,
 			&alpha,A,&ONE,&ONE,descA,
-			       x,&ONE,&ONE,descx,&ONE,
+			       y,&ONE,&ONE,descy,&ONE,
 			&beta, T,&ONE,&ONE,descT,&ONE);
 #ifdef DEBUG
 	printf("p(%d): Mean Centering Complete\n", myrank_mpi);
 	Cblacs_barrier(context, "A");
 #endif
 
+	Cblacs_barrier(context, "A");
 	/* (2) perform svd on the normalized A to get basis matrices, U & V	*/
 	/*PDGESVD(JOBU,JOBVT,M,N,    JOBU, JOBVT = 'V' if want values returned
 	 *		A,IA,JA,DESCA,S,		all of IX,IX should be &ONE typically
 	 *		U,IU,JU,DESCU,
 	 *		VT,IVT,JVT,DESCVT,
 	 *		WORK,LWORK,INFO)*/
-	double wkopt; /*workopt is to  */
+	 /*workopt is a temp variable to hold size of the work array */
+	double wkopt;
 	/* SVD */
 	pdgesvd_("V", "V", &M, &N, 
 			A, &ONE, &ONE, descA, 
@@ -434,6 +435,7 @@ int main(int argc, char **argv) {
 	for ( i = 0; i < nElements; i++) {
 		A[i] = Cp[i];
 	}
+	Cblacs_barrier(context, "A");
 	/* (3) Projections: Multiply X=U'A  and  x=U'T (corrected from UU'T) */
 	// C = alphaA'B+betaC
 	// pdgemm (transa, transb, m, n, k, 
@@ -443,12 +445,14 @@ int main(int argc, char **argv) {
 	//
 	// X=U'A by pdgemm(): X = alphaU'A+betaX (transa="T", transb="N")
 	// since transa="T", k=numrows of U
+	alpha = 1.0;
 	beta = 0.0;
 	pdgemm_("T","N", &M, &N, &mU,
 			&alpha, U, &ONE, &ONE, descU,
 			A, &ONE, &ONE, descA,
 			&beta, X, &ONE, &ONE, descX);
 			
+	Cblacs_barrier(context, "A");
 	// x=U'T+0*x by pdgemv() 
 	pdgemv_("T",&M,&M,
 			&alpha,U,&ONE,&ONE,descU,
@@ -486,6 +490,7 @@ int main(int argc, char **argv) {
 	fflush(stdout);
 #endif
 
+	Cblacs_barrier(context, "A");
 	/* (5) caculate D'D	(corrected from sqrt(D'D) which is unnecessary) 
 	 * copy D to another matrix then run pdgemv with transpose the copy of D */
 	/* use VT as D'D since it's NxN and don't need it anymore */
@@ -501,6 +506,7 @@ int main(int argc, char **argv) {
 	fflush(stdout);
 #endif
 
+	Cblacs_barrier(context, "A");
 	/* find the minimum diagonal element, this is the matching character */
 	/* TODO: how do we do this across all nodes? 
 	 * PDLACP3( M, I, A, DESCA, B, LDB, II, JJ, REV )*/
