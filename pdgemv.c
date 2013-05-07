@@ -74,7 +74,10 @@ int main(int argc, char **argv) {
 	}
 
 	double alpha = 1.0; double beta = 0.0;
-	pdgemv_("N",&M,&M,&alpha,A,&ONE,&ONE,descA,x,&ONE,&ONE,descx,&ONE,&beta,y,&ONE,&ONE,descy,&ONE);
+	pdgemv_("N",&M,&M,
+			&alpha,A,&ONE,&ONE,descA,
+			       x,&ONE,&ONE,descx,&ONE,
+			&beta, y,&ONE,&ONE,descy,&ONE);
 
 	Cblacs_barrier(ictxt,"A");
 	for(i=0;i<my;i++)

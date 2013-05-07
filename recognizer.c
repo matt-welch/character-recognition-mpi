@@ -8,6 +8,24 @@
 * SECTION:     20520
 * TERM:        Spring 2013
 *******************************************************************************/
+/* algorithm for Character-Recognizer-MPI
+ * (0) Use MPI-IO to read in the test and reference sets
+ * (1) Normalization: Calculate a "mean" vector of all values in the character
+ *		set.  Subtract mean from the test image (T) & from each character in 
+ *		the set (A).
+ * (2) Perform SVD on the normalized A to get basis matrices, U & V
+ * (3) Projections: Multiply X=U'A  and  x=U'T (corrected from UU'T)
+ * (4) Find Minimum: Subtract x from each column of X to make D,
+ *		the "difference matrix"*
+ * (5) Calculate DD', find the minimum diagonal element. The column of this
+ *		element is the matching character
+ */
+/* Function prototypes: 
+	 * Y = aAX  + bY	PvAXPY( N, ALPHA, X, IX, JX, DESCX, INCX, Y, IY, JY, DESCY, INCY )  
+	 * C = aAB  + bC	PvGEMM( TRANSA, TRANSB, M, N, K, ALPHA, A, IA, JA, DESCA, B, IB, JB, DESCB, BETA, C, IC, JC, DESCC ) 
+	 * C = bC   + aA'	PvTRAN( M, N, ALPHA, A, IA, JA, DESCA, BETA, C, IC, JC, DESCC ) 
+	 * Y = aAX  + bY	PvGEMV( TRANS="N", M, N, ALPHA, A, IA, JA, DESCA, X, IX, JX, DESCX, INCX, BETA, Y, IY, JY, DESCY, INCY ) 
+	 * Y = aA'X + bY	PvGEMV( TRANS="T", M, N, ALPHA, A, IA, JA, DESCA, X, IX, JX, DESCX, INCX, BETA, Y, IY, JY, DESCY, INCY ) */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -19,23 +37,12 @@
 #include <sys/time.h>
 
 #define DEBUG
-#define DESCRIPTORS
-//#define DOTHEMATH
-#define FREEMEMORY
 
 #define A(i,j) A[(i)*mA+(j)]
 #define Cp(i,j) Cp[(i)*mA+(j)]
 #define Z(i,j) Z[(i)*mZ+(j)]
 #define x(i) x[i];
 
-//void Cblacs_get (int context, int request, int* value);
-//void Cblacs_gridinfo (int context, int* np_row, int* np_col, int* my_row, int* my_col);
-//void Cblacs_pinfo(int*, int*);
-//void Cblacs_get(int, int, int*);
-//void Cblacs_gridinit(int*, char*, int, int);
-//void Cblacs_gridinfo(int, int*, int*, int*, int*);
-//void Cblacs_barrier(int , char*);
-//void Cblacs_gridexit(int);
 int numroc_(int *, int *, int *, int *, int *);
 
 void descinit_(int *, int *, int *, int *, int *,
@@ -64,7 +71,7 @@ int main(int argc, char **argv) {
 	int nb = 2;	/* number of blocks per side */
 	int i, j, k, idx, count=0;
 	int info=0,itemp;
-	int ZERO=0,ONE=1; /* constants for passing into pblacs routines */
+	int ZERO=0,ONE=1,NEG=-1; /* constants for passing into pblacs routines */
 	double *A, *Cp, *T, *U, *UT, *S, *V, *VT, *X, *D, *DT, *x, *y; /* local arrays */
 	double ScalarOne[1] = {1};
 	/* matrix size is already known: 72*(128*128)= 72*16384 */
@@ -80,7 +87,19 @@ int main(int argc, char **argv) {
 	/* define processor grid topology: 
 	 * Square grid, nprocs x nprocs 
 	 * processor array dims = sqrt (nprocs)  - assume square integer */
-	nprow = npcol = (int)sqrt(nprocs_mpi);
+	if(nprocs_mpi == 4)
+		nprow = npcol = 2;
+	else if(nprocs_mpi == 16)
+		nprow = npcol = 4;
+	else if(nprocs_mpi == 64)
+		nprow = npcol = 16;
+	else 
+		nprow = npcol = 1;
+
+	if (myrank_mpi==0) {
+		printf("Character Recognizer with SVD!\n");
+		printf("Using %d processors in %d x %d grid\n", nprocs_mpi,nprow,npcol);
+	}
 	/* get rank and processor count for the BLACS grid */
 	Cblacs_pinfo( &myrank_mpi, &nprocs_mpi ) ;
 	/* establish blacs grid & topology */
@@ -141,20 +160,20 @@ int main(int argc, char **argv) {
 #endif
 
 	/* initialize each array with the appropriate contents */
-	U  = malloc(mU * nU * sizeof(double));	/* array to hold the orthonormal matrix, U */
-	UT = malloc(mUT* nUT* sizeof(double));	/* array to hold the orthonormal matrix, U */
-	S  = malloc(mS * nS * sizeof(double));	/* array to hold the singular values matrix, S, returned as a vector from scalapack */
-	V  = malloc(mV * nV * sizeof(double));	/* array to hold the orthonormal matrix, V */
-	VT = malloc(nV * mV * sizeof(double));	/* array to hold the orthonormal matrix, VT */
-	X  = malloc(mX * nX * sizeof(double));	/* array to hold the matrix, X */
-	D  = malloc(mD * nD * sizeof(double));	/* array to hold the matrix, D */
-	DT = malloc(nD * mD * sizeof(double));	/* array to hold the matrix, D */
-	x  = malloc(mx * nx * sizeof(double));	/* array to hold the matrix, x */
-	y  = malloc(my * ny * sizeof(double));	/* array to hold the ones matrix, y */
+	U  = calloc(mU * nU , sizeof(double));	/* array to hold the orthonormal matrix, U */
+	UT = calloc(mUT* nUT, sizeof(double));	/* array to hold the orthonormal matrix, U */
+	S  = calloc(N , sizeof(double));	/* array to hold the singular values matrix, S, returned as a vector from scalapack */
+	V  = calloc(mV * nV , sizeof(double));	/* array to hold the orthonormal matrix, V */
+	VT = calloc(nV * mV , sizeof(double));	/* array to hold the orthonormal matrix, VT */
+	X  = calloc(mX * nX , sizeof(double));	/* array to hold the matrix, X */
+	D  = calloc(mD * nD , sizeof(double));	/* array to hold the matrix, D */
+	DT = calloc(nD * mD , sizeof(double));	/* array to hold the matrix, D */
+	x  = calloc(mx * nx , sizeof(double));	/* array to hold the matrix, x */
+	y  = calloc(my * ny , sizeof(double));	/* array to hold the ones matrix, y */
 
 	/* initialize work array for SVD later */
 	int lwork = -1;//mA*nA;
-	double * work = malloc(mA*nA*sizeof(double));
+	double * work = calloc(mA*nA,sizeof(double));
 
 	/* IO with reference matrix and test matrix */
 	/* timing harness for IOPS */
@@ -191,8 +210,8 @@ int main(int argc, char **argv) {
 #ifdef VERBOSE
 	printf("P(%d): nElements=%d\n", myrank_mpi, nElements); fflush(stdout);
 #endif
-	A	= malloc(nElements*sizeof(double));  /* array to hold the local reference matrix, A */
-	Cp	= malloc(nElements*sizeof(double));  /* array to hold the local copy of ref matrix, Cp */
+	A	= calloc(nElements,sizeof(double));  /* array to hold the local reference matrix, A */
+	Cp	= calloc(nElements,sizeof(double));  /* array to hold the local copy of ref matrix, Cp */
 	MPI_File_set_view(refFile, 0, MPI_DOUBLE, darrayA, datarep, MPI_INFO_NULL);
 	MPI_File_read_all(refFile, A, nElements, MPI_DOUBLE, mpistatus); 
 #ifdef VERBOSE
@@ -234,7 +253,7 @@ int main(int argc, char **argv) {
 #endif
 
 	MPI_File_read_all(testFile, T, nElements, MPI_DOUBLE, mpistatus); 
-#ifdef VERBOSE
+#ifdef DEBUG
 	printf("P(%d): End TEST File read\n", myrank_mpi);
 	printf("P(%d): nElements=%d, mT=%d, nT=%d,  min(T)=%3.2f, max(T)=%3.2f \n", 
 			myrank_mpi, nElements, mT, nT, rowMin(T, nElements), rowMax(T, nElements));
@@ -245,6 +264,40 @@ int main(int argc, char **argv) {
 	MPI_File_close(&testFile);
 #ifdef VERBOSE
 	printf("P(%d): REF& TEST files closed\n", myrank_mpi);
+#endif
+
+#ifdef VERBOSE
+	/* attempt to print "ASCII art" of the character */
+	int mZ=128;
+	double * Z = calloc(mZ*mZ,sizeof(double));
+	for (i = 0; i < mZ*mZ; i++) {
+		Z[i]=1.0;
+	}
+
+	pdlacp3_( &mZ, &ZERO, T, descT, Z, &mZ, &NEG, &NEG, &ZERO);
+
+	Cblacs_barrier(context, "A");
+	printf("P(%d): End pdlacp3 \n", myrank_mpi);
+	printf("P(%d): mT=%d, nT=%d,  min(T)=%3.2f, max(T)=%3.2f \n", 
+			myrank_mpi, mT, nT, rowMin(T, mT*nT), rowMax(T, mT*nT));
+	fflush(stdout);
+	if(myrank_mpi == 0){	
+		printf("\n\n");
+		for (i = 0; i < mZ*mZ; i++) {
+			if( Z[i] > 0 ) {
+				printf("X");
+			}else{
+				printf(".");
+			}
+			if((i+1)%128==0)
+				printf("\n");
+		}
+		printf("\n\n");
+		fflush(stdout);
+	}
+
+	Cblacs_barrier(context, "A");
+	MPI_Abort(MPI_COMM_WORLD, errorcode);
 #endif
 
 	/* close timing harness for IOPS */
@@ -297,20 +350,7 @@ int main(int argc, char **argv) {
 			       y,&ONE,&ONE,descy,&ONE,
 			&beta, x,&ONE,&ONE,descx,&ONE);
 
-	/* Function prototypes: 
-	 * Y = aAX  + bY	PvAXPY( N, ALPHA, X, IX, JX, DESCX, INCX, Y, IY, JY, DESCY, INCY )  
-	 * C = aAB  + bC	PvGEMM( TRANSA, TRANSB, M, N, K, ALPHA, A, IA, JA, DESCA, B, IB, JB, DESCB, BETA, C, IC, JC, DESCC ) 
-	 * C = bC   + aA'	PvTRAN( M, N, ALPHA, A, IA, JA, DESCA, BETA, C, IC, JC, DESCC ) 
-	 * Y = aAX  + bY	PvGEMV( TRANS="N", M, N, ALPHA, A, IA, JA, DESCA, X, IX, JX, DESCX, INCX, BETA, Y, IY, JY, DESCY, INCY ) 
-	 * Y = aA'X + bY	PvGEMV( TRANS="T", M, N, ALPHA, A, IA, JA, DESCA, X, IX, JX, DESCX, INCX, BETA, Y, IY, JY, DESCY, INCY ) 
-	 * */
-	
 	/* (1) subtract the mean from the test image and the reference set (mean center) */
-
-	/* Subtract the mean vector from each column of A
-	 * inefficient because can't find a scalapack routine for it */
-	/* TODO: block the loops for more efficient cache utilization */
-	/* make a copy of A because it will be overwritten by SVD */
 	// sum vectors with: C = AY + 0*X
 	//* C = aAB  + bC	PvGEMM( TRANSA, TRANSB, M, N, K, ALPHA, A, IA, JA, DESCA, B, IB, JB, DESCB, BETA, C, IC, JC, DESCC ) 
 	// A = -1 * x * y + 1.0 * A
@@ -318,29 +358,25 @@ int main(int argc, char **argv) {
 	alpha=-1.0;
 	beta = 1.0;
 	/* should &mA,&nA be &M,&N instead?? */
-	pdgemm_("N","T", &mA, &nA, &ONE,
+	pdgemm_("N","T", &M , &N , &ONE,
 			&alpha, x, &ONE, &ONE, descx,
 			y, &ONE, &ONE, descy,
 			&beta, A, &ONE, &ONE, descA);
 	/* T is the test image
 	 * x is the mean of the reference characters */
 	// mean center T with: T = Ax + 1.0*T
-	// x = 1.0 * A * x + 1.0 * T
+	// x = -1.0 * A * x + 1.0 * T
 	alpha = -1.0/72;
 	beta = 1.0;
 	/* TODO: should &mA,&nA be &M,&N instead?? */
-	pdgemv_("T",&mA,&ONE,
+	pdgemv_("T",&M,&ONE,
 			&alpha,A,&ONE,&ONE,descA,
 			       x,&ONE,&ONE,descx,&ONE,
 			&beta, T,&ONE,&ONE,descT,&ONE);
 #ifdef DEBUG
-	printf("p(%d): Mean Centering is DONE!!!!\n", myrank_mpi);
+	printf("p(%d): Mean Centering Complete\n", myrank_mpi);
 	Cblacs_barrier(context, "A");
 #endif
-
-	for ( i = 0; i < nElements; i++) {
-		A[i] = Cp[i];
-	}
 
 	/* (2) perform svd on the normalized A to get basis matrices, U & V	*/
 	/*PDGESVD(JOBU,JOBVT,M,N,    JOBU, JOBVT = 'V' if want values returned
@@ -348,7 +384,8 @@ int main(int argc, char **argv) {
 	 *		U,IU,JU,DESCU,
 	 *		VT,IVT,JVT,DESCVT,
 	 *		WORK,LWORK,INFO)*/
-	double wkopt; 
+	double wkopt; /*workopt is to  */
+	/* SVD */
 	pdgesvd_("V", "V", &M, &N, 
 			A, &ONE, &ONE, descA, 
 			S,
@@ -360,14 +397,21 @@ int main(int argc, char **argv) {
 	printf("P(%d): First SVD complete: lwork = %d, wkopt = %3.2f, work-len=%d\n", myrank_mpi, lwork, wkopt, mA*nA);
 	fflush(stdout);
 #endif
-	work = malloc(lwork * sizeof(double));
-#ifdef DEBUG		
+	work = calloc(lwork , sizeof(double));
+
+#ifdef VERBOSE
 	printf("P(%d): done with malloc work, begin SVD\n", myrank_mpi);
 	printf("P(%d): lwork = %d\n",myrank_mpi,lwork); 
 	fflush(stdout);
 	Cblacs_barrier(context, "A");
 #endif
-	pdgesvd_("V", "N", &M, &N, 
+
+	/* copy A back after SVD overwrites it */
+	for ( i = 0; i < nElements; i++) {
+		A[i] = Cp[i];
+	}
+	/* SVD */
+	pdgesvd_("V", "V", &M, &N, 
 			A, &ONE, &ONE, descA, 
 			S,
 			U, &ONE, &ONE, descU,
@@ -375,10 +419,21 @@ int main(int argc, char **argv) {
 			work, &lwork, &info);
 #ifdef DEBUG
 	printf("P(%d): Second SVD complete\n", myrank_mpi);
+#ifdef VERBOSE
+	if(myrank_mpi == 0){
+		for (i = 0; i < N; i++) {
+			printf("P(%d): S[%d]=%2.4f\n",myrank_mpi,i, S[i]);
+		}
+	}
+#endif
 	fflush(stdout);
 	Cblacs_barrier(context, "A");
 #endif
 
+	/* copy A back after SVD overwrites it */
+	for ( i = 0; i < nElements; i++) {
+		A[i] = Cp[i];
+	}
 	/* (3) Projections: Multiply X=U'A  and  x=U'T (corrected from UU'T) */
 	// C = alphaA'B+betaC
 	// pdgemm (transa, transb, m, n, k, 
@@ -404,6 +459,8 @@ int main(int argc, char **argv) {
 	printf("P(%d): projections complete\n", myrank_mpi);
 	fflush(stdout);
 #endif
+
+	Cblacs_barrier(context, "A");
 	/* (4) Find mimimum:
 	 * Subtract x from each column of X to make D */
 	// D(:,j) = X(:,j) - x
@@ -412,64 +469,72 @@ int main(int argc, char **argv) {
 	/* TODO: block the loops for more efficient cache utilization */
 	// sum vectors with: C = AY + 0*X
 	//* C = aAB  + bC	PvGEMM( TRANSA, TRANSB, M, N, K, ALPHA, A, IA, JA, DESCA, B, IB, JB, DESCB, BETA, C, IC, JC, DESCC ) 
-	// A = -1 * x * y + 1.0 * A
+	// X = -1 * x * y + 1.0 * X
 	alpha=-1.0;
 	beta = 1.0;
 	/* should &mA,&nA be &M,&N instead?? */
-	pdgemm_("N","T", &mX, &nX, &ONE,
+	pdgemm_("N","T", &M, &N, &ONE,
 			&alpha, x, &ONE, &ONE, descx,
-			y, &ONE, &ONE, descy,
-			&beta, X, &ONE, &ONE, descX);
-	/* TODO: copy X into D	*/
-//	for (j = 0; j < nX; j++) {
-//		for(i = 0; i < mX; i++){
-//			idx = i*mX+j;
-//			DT[idx] = D[idx] = X[idx] - x(i);
-//		}
+					y, &ONE, &ONE, descy,
+			&beta,	X, &ONE, &ONE, descX);
+//	/* copy X into D	*/
+//	for (i = 0; i < mD*nD; i++) {
+//		D[i] = X[i];
 //	}
-
+#ifdef DEBUG
+	printf("P(%d): Difference Matrix calculated\n", myrank_mpi);
+	fflush(stdout);
+#endif
 
 	/* (5) caculate D'D	(corrected from sqrt(D'D) which is unnecessary) 
 	 * copy D to another matrix then run pdgemv with transpose the copy of D */
 	/* use VT as D'D since it's NxN and don't need it anymore */
-	for (i = 0; i < mD*nD; i++) {
-		DT[i]=D[i];
-	}
 	alpha=1.0; beta=0.0;
-	/* TODO: originally &N, &N, &mD  was seg-faulting, try alternate*/
-	pdgemm_("T","N",&mD, &mD, &ONE,
-			&alpha, DT, &ONE, &ONE, descDT,
-			D, &ONE, &ONE, descD, 
+	/* TODO: originally &M, &N, &mD  was seg-faulting, try alternate*/
+	pdgemm_("T","N", &N, &N, &N,
+			&alpha, X, &ONE, &ONE, descX,
+			        X, &ONE, &ONE, descX, 
 			&beta, VT, &ONE, &ONE, descVT);
 
-#ifdef DOTHEMATH
-	/* find the minimum diagonal element, this is the matching character */
-	/* TODO: how do we do this across all nodes? */
-	int minVal  = VT[0];
-	for (i = 0; i < mV; i++) {
-		idx = i*mV + i;
-		if( VT[idx] < minVal ) {
-			minVal = VT[idx];
-			count = i;	/* count is use dhere as the matching sample of the reference vector */
-		}
-	}
+#ifdef DEBUG
+	printf("P(%d): D'D calculated\n", myrank_mpi);
+	fflush(stdout);
+#endif
 
-#endif /* DOTHEMATH */
-	
-	Cblacs_barrier(context, "A");
-	/* print number of matching character */
-	printf("P(%d): Character is number %d, value=%3.2f  !!!!!  ;-)\n", 
-			myrank_mpi, count+1, VT[count*mV+count]);
+	/* find the minimum diagonal element, this is the matching character */
+	/* TODO: how do we do this across all nodes? 
+	 * PDLACP3( M, I, A, DESCA, B, LDB, II, JJ, REV )*/
+	int mB=N+1;
+	 NEG=-1;
+	double * B = calloc(mB*mB,sizeof(double));
+
+	pdlacp3_( &mB, &ZERO, VT, descVT, B, &mB, &NEG, &NEG, &ZERO);
+
+	if(myrank_mpi == 0){	
+		//for (i = 0; i < mB; i++) {
+		//	printf("B[%d,%d]=%3.2f\n", i,i,B[i*mB+i]);
+		//}
+		int minVal  = VT[0];
+		for (i = 0; i < mB; i++) {
+			idx = i*mB + i;
+			if( B[idx] < minVal ) {
+				minVal = B[idx];
+				count = i;	/* count is used here as the matching sample of the reference vector */
+			}
+		}
+
+		/* print number of matching character */
+		printf("P(%d): Character is number %d, value=%3.2f  !!!!!  ;-)\n", 
+				myrank_mpi, count+1, VT[count*mV+count]);
+	}
 #ifdef DEBUG
 	printf("P(%d) Waiting on barrier\n", myrank_mpi);
 	Cblacs_barrier(context, "A");
 #endif
 
-#ifdef FREEMEMORY
 	/* free allocated arrays */
 	free(A); free(Cp); free(T); free(U); free(UT); free(S); free(V); free(VT); 
 	free(X); free(D); free(x); free(y);
-#endif /* FREEMEMORY */
 
 	/* finalize timing harness */
     /* timekeeping - only needs to be executed by root*/ 
@@ -519,16 +584,4 @@ double rowMax(double * u, int rowLength){
 	}
 	return maximum;
 }
-/* algorithm for Character-Recognizer-MPI
- * (0) Use MPI-IO to read in the test and reference sets
- * (1) Normalization: Calculate a "mean" vector of all values in the character
- *		set.  Subtract mean from the test image (T) & from each character in 
- *		the set (A).
- * (2) Perform SVD on the normalized A to get basis matrices, U & V
- * (3) Projections: Multiply X=U'A  and  x=U'T (corrected from UU'T)
- * (4) Find Minimum: Subtract x from each column of X to make D,
- *		the "difference matrix"*
- * (5) Calculate DD', find the minimum diagonal element. The column of this
- *		element is the matching character
- */
 
